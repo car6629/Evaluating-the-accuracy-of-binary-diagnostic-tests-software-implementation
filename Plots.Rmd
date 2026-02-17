@@ -1,0 +1,421 @@
+---
+title: "Plots"
+author: "Caroline"
+date: "2026-02-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r one test plots: comparison of situations with/ wo gold standard and informative prior}
+#install.packages(c("rjags", "ggplot2", "dplyr", "tidyr", "coda"))
+
+library(rjags)
+library(coda)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+
+set.seed(123)
+
+# ==========================================
+# 1. Gold Standard (GS) simulation
+# ==========================================
+cat("Running Gold Standard simulation...\n")
+
+n_1 <- 1023; n_0 <- 442; n11 <- 815; n00 <- 327
+aSe <- bSe <- aSp <- bSp <- api <- bpi <- 1
+S <- 10000 # 迭代次数
+
+# 生成样本
+Se_gs <- rbeta(S, aSe + n11, bSe + n_1 - n11)
+Sp_gs <- rbeta(S, aSp + n00, bSp + n_0 - n00)
+Pi_gs <- rbeta(S, api + n_1, bpi + n_0)
+
+# 整理为数据框
+df_gs <- data.frame(Se = Se_gs, Sp = Sp_gs, Pi = Pi_gs)
+df_gs$Scenario <- "Gold Standard"
+
+# ==========================================
+# 2. Non-GS: Informative Prior 
+# ==========================================
+cat("Running Informative Prior simulation...\n")
+
+# data and priors
+obs <- list(n1plus = 930, n = 1465)
+prior_info <- list(aSe = 103.7, bSe = 26.7, aSp = 24.3, bSp = 9.2,
+                   api = 143.5, bpi = 62.1)
+
+# JAGS model
+model_string <- "model{
+  # likelihood
+  n1plus ~ dbinom(p, n)
+  p = Pi * Se + (1 - Pi) * (1 - Sp)
+  # prior
+  Se ~ dbeta(aSe, bSe)
+  Sp ~ dbeta(aSp, bSp)
+  Pi ~ dbeta(api, bpi)
+}"
+
+# initialization
+inits <- list(.RNG.name = "base::Mersenne-Twister", .RNG.seed = 123)
+model_info <- jags.model(textConnection(model_string), 
+                         data = c(obs, prior_info), 
+                         inits = inits, quiet = TRUE)
+
+samples_info <- coda.samples(model_info,
+                             variable.name = c("Se", "Sp", "Pi"),
+                             n.iter = 50000) # 迭代次数可根据需要调整
+
+
+df_info <- as.data.frame(as.matrix(samples_info))
+
+df_info <- df_info[, c("Se", "Sp", "Pi")]
+df_info$Scenario <- "Informative Prior"
+
+# ==========================================
+# 3. Non-GS: Non-informative Prior 
+# ==========================================
+cat("Running Non-informative Prior simulation...\n")
+
+#  Uniform Prior
+prior_noninfo <- list(aSe = 1, bSe = 1, aSp = 1, bSp = 1,
+                      api = 1, bpi = 1)
+
+
+model_noninfo <- jags.model(textConnection(model_string), 
+                            data = c(obs, prior_noninfo), 
+                            inits = inits, quiet = TRUE)
+
+samples_noninfo <- coda.samples(model_noninfo,
+                                variable.name = c("Se", "Sp", "Pi"),
+                                n.iter = 50000)
+
+
+df_noninfo <- as.data.frame(as.matrix(samples_noninfo))
+df_noninfo <- df_noninfo[, c("Se", "Sp", "Pi")]
+df_noninfo$Scenario <- "Non-informative Prior"
+
+# ==========================================
+# 4. Data collection and Plots
+# ==========================================
+cat("Generating Plot...\n")
+
+
+all_data <- rbind(df_gs, df_info, df_noninfo)
+
+
+plot_data <- all_data %>%
+  pivot_longer(cols = c("Se", "Sp", "Pi"), 
+               names_to = "Parameter", 
+               values_to = "Value")
+
+
+plot_data$Scenario <- factor(plot_data$Scenario, 
+                             levels = c("Gold Standard", 
+                                        "Informative Prior", 
+                                        "Non-informative Prior"))
+
+
+p <- ggplot(plot_data, aes(x = Value, fill = Scenario, color = Scenario)) +
+  geom_density(alpha = 0.4, size = 0.8) +
+  facet_wrap(~Parameter, scales = "free") +
+  theme_bw() +
+  scale_fill_manual(values = c("#1f77b4", "#2ca02c", "#d62728")) +
+  scale_color_manual(values = c("#1f77b4", "#2ca02c", "#d62728")) +
+  labs(title = "Posterior Distributions Comparison",
+       subtitle = "Gold Standard vs. Informative vs. Non-informative Priors",
+       x = "Parameter Value",
+       y = "Density") +
+  theme(legend.position = "bottom",
+        strip.text = element_text(size = 12, face = "bold"),
+        legend.title = element_blank())
+
+
+print(p)
+```
+
+```{r Two tests two populations Hui-Walter Model plots: with/without informative priors}
+
+# Two tests with informative priors
+require(prevalence)
+library(coda)
+
+pri_Sp1 <- betaExpert(best = 0.98, lower = 0.8, p = 0.95, method = "mode")
+aSp1 <- round(pri_Sp1$alpha, 1)
+bSp1 <- round(pri_Sp1$beta, 1)
+
+
+pri_Se1 <- betaExpert(best = 0.55, upper = 0.85, p = 0.95, method = "mode")
+aSe1 <- round(pri_Se1$alpha, 1)
+bSe1 <- round(pri_Se1$beta, 1)
+
+pri_Se2 <- betaExpert(best = 0.9, lower = 0.6, p = 0.95, method = "mode")
+aSe2 <- round(pri_Se2$alpha, 1)
+bSe2 <- round(pri_Se2$beta, 1)
+
+pri_Sp2 <- betaExpert(best = 0.85, lower = 0.6, p = 0.95, method = "mode")
+aSp2 <- round(pri_Sp2$alpha, 1)
+bSp2 <- round(pri_Sp2$beta, 1)
+
+par_Pi2 <- betaExpert(best = 0.3, lower = 0.08, p = 0.95, method = "mode")
+aPi2 <- round(par_Pi2$alpha, 1)
+bPi2 <- round(par_Pi2$beta, 1)
+
+par_Pi1 <- betaExpert(best = 0.03, upper = 0.3, p = 0.95, method = "mode")
+aPi1 <- round(par_Pi1$alpha, 1)
+bPi1 <- round(par_Pi1$beta, 1)
+
+n111 <- 0; n101 <- 0; n011 <- 3; n001 <- 129
+n112 <- 3; n102 <- 0; n012 <- 24; n002 <- 3
+
+S <- 50000
+Se1 <- Se2 <- Sp1 <- Sp2 <- Pi1 <- Pi2 <- numeric(S)
+Se1[1] <- Se2[1] <- Sp1[1] <- Sp2[1] <- Pi1[1] <- Pi2[1] <- 0.5
+
+set.seed(123)
+for(i in 2:S){
+  pz111 <- Pi1[i-1] * Se1[i-1] * Se2[i-1] / (Pi1[i-1] * Se1[i-1] * Se2[i-1]
+                                           + (1-Pi1[i-1]) * (1-Sp1[i-1]) * (1-Sp2[i-1]))
+  pz112 <- Pi2[i-1] * Se1[i-1] * Se2[i-1] / (Pi2[i-1] * Se1[i-1] * Se2[i-1]
+                                           + (1-Pi2[i-1]) * (1-Sp1[i-1]) * (1-Sp2[i-1]))
+  pz101 <- Pi1[i-1] * Se1[i-1] * (1-Se2[i-1]) / (Pi1[i-1] * Se1[i-1] * (1-Se2[i-1])
+                                                 + (1-Pi1[i-1]) * (1-Sp1[i-1]) * Sp2[i-1])
+  pz102 <- Pi2[i-1] * Se1[i-1] * (1-Se2[i-1]) / (Pi2[i-1] * Se1[i-1] * (1-Se2[i-1])
+                                                 + (1-Pi2[i-1]) * (1-Sp1[i-1]) * Sp2[i-1])
+  pz011 <- Pi1[i-1] * (1 - Se1[i-1]) * Se2[i-1] / (Pi1[i-1] * (1-Se1[i-1]) * Se2[i-1]
+                                                   + (1-Pi1[i-1]) * Sp1[i-1] * (1-Sp2[i-1]))
+  pz012 <- Pi2[i-1] * (1 - Se1[i-1]) * Se2[i-1] / (Pi2[i-1] * (1-Se1[i-1]) * Se2[i-1]
+                                                    + (1-Pi2[i-1]) * Sp1[i-1] * (1-Sp2[i-1]))
+  pz001 <- Pi1[i-1] * (1-Se1[i-1]) * (1-Se2[i-1]) / (Pi1[i-1] * (1-Se1[i-1]) * (1-Se2[i-1])
+                                                     + (1-Pi1[i-1]) * Sp1[i-1] * Sp2[i-1]) 
+  pz002 <- Pi2[i-1] * (1-Se1[i-1]) * (1-Se2[i-1]) / (Pi2[i-1] * (1-Se1[i-1]) * (1-Se2[i-1])
+                                                     + (1-Pi2[i-1]) * Sp1[i-1] * Sp2[i-1])
+  
+  z111 <- rbinom(1, n111, pz111)
+  z112 <- rbinom(1, n112, pz112)
+  z101 <- rbinom(1, n101, pz101)
+  z102 <- rbinom(1, n102, pz102)
+  z011 <- rbinom(1, n011, pz011)
+  z012 <- rbinom(1, n012, pz012)
+  z001 <- rbinom(1, n001, pz001)
+  z002 <- rbinom(1, n002, pz002)
+  
+  Se1[i] <- rbeta(1, aSe1 + z111 + z101 + z112 + z102, bSe1 + z011 + z001 + z012 + z002)
+  Se2[i] <- rbeta(1, aSe2 + z111 + z011 + z112 + z012, bSe2 + z101 + z001 + z102 + z002)
+  Sp1[i] <- rbeta(1, aSp1 + n011 + n001 + n012 + n002 - z011 - z001 - z012,
+                  bSp1 + n111 + n101 + n112 + n102 - z111 - z101 - z112 - z102)
+  Sp2[i] <- rbeta(1, aSp2 + n101 + n001 + n102 + n002 - z101 - z001 - z002,
+                  bSp2 + n111 + n011 + n112 + n012 - z111 - z011 - z112 - z012)
+  Pi1[i] <- rbeta(1, aPi1 + z111 + z101 + z011 + z001, bPi1 + n111 + n101
+                  + n011 + n001 - z111 - z101 - z011 - z001)
+  Pi2[i] <- rbeta(1, aPi2 + z112 + z102 + z012 + z002, bPi2 + n112 + n102
+                  + n012 + n002 - z112 - z102 - z012 - z002)
+  
+}
+
+median(Se1)
+median(Se2)
+median(Sp1)
+median(Sp2)
+median(Pi1)
+median(Pi2)
+
+quantile(Se1, probs = c(0.025, 0.975))
+quantile(Se2, probs = c(0.025, 0.975))
+quantile(Sp1, probs = c(0.025, 0.975))
+quantile(Sp2, probs = c(0.025, 0.975))
+quantile(Pi1, probs = c(0.025, 0.975))
+quantile(Pi2, probs = c(0.025, 0.975))
+
+effectiveSize(mcmc(cbind(Se1, Se2, Sp1, Sp2, Pi1, Pi2)))
+
+
+
+# Two tests without informative priors
+require(prevalence)
+library(coda)
+
+aSp1 <- bSp1 <- aSe1 <- bSe1 <- 1
+aSp2 <- bSp2 <- aSe2 <- bSe2 <- 1
+pi1 <- pi2 <- 1
+
+n111 <- 0; n101 <- 0; n011 <- 3; n001 <- 129
+n112 <- 3; n102 <- 0; n012 <- 24; n002 <- 3
+
+S <- 50000
+Se1 <- Se2 <- Sp1 <- Sp2 <- Pi1 <- Pi2 <- numeric(S)
+Se1[1] <- Se2[1] <- Sp1[1] <- Sp2[1] <- Pi1[1] <- Pi2[1] <- 0.5
+
+set.seed(123)
+for(i in 2:S){
+  pz111 <- Pi1[i-1] * Se1[i-1] * Se2[i-1] / (Pi1[i-1] * Se1[i-1] * Se2[i-1]
+                                           + (1-Pi1[i-1]) * (1-Sp1[i-1]) * (1-Sp2[i-1]))
+  pz112 <- Pi2[i-1] * Se1[i-1] * Se2[i-1] / (Pi2[i-1] * Se1[i-1] * Se2[i-1]
+                                           + (1-Pi2[i-1]) * (1-Sp1[i-1]) * (1-Sp2[i-1]))
+  pz101 <- Pi1[i-1] * Se1[i-1] * (1-Se2[i-1]) / (Pi1[i-1] * Se1[i-1] * (1-Se2[i-1])
+                                                 + (1-Pi1[i-1]) * (1-Sp1[i-1]) * Sp2[i-1])
+  pz102 <- Pi2[i-1] * Se1[i-1] * (1-Se2[i-1]) / (Pi2[i-1] * Se1[i-1] * (1-Se2[i-1])
+                                                 + (1-Pi2[i-1]) * (1-Sp1[i-1]) * Sp2[i-1])
+  pz011 <- Pi1[i-1] * (1 - Se1[i-1]) * Se2[i-1] / (Pi1[i-1] * (1-Se1[i-1]) * Se2[i-1]
+                                                   + (1-Pi1[i-1]) * Sp1[i-1] * (1-Sp2[i-1]))
+  pz012 <- Pi2[i-1] * (1 - Se1[i-1]) * Se2[i-1] / (Pi2[i-1] * (1-Se1[i-1]) * Se2[i-1]
+                                                    + (1-Pi2[i-1]) * Sp1[i-1] * (1-Sp2[i-1]))
+  pz001 <- Pi1[i-1] * (1-Se1[i-1]) * (1-Se2[i-1]) / (Pi1[i-1] * (1-Se1[i-1]) * (1-Se2[i-1])
+                                                     + (1-Pi1[i-1]) * Sp1[i-1] * Sp2[i-1]) 
+  pz002 <- Pi2[i-1] * (1-Se1[i-1]) * (1-Se2[i-1]) / (Pi2[i-1] * (1-Se1[i-1]) * (1-Se2[i-1])
+                                                     + (1-Pi2[i-1]) * Sp1[i-1] * Sp2[i-1])
+  
+  z111 <- rbinom(1, n111, pz111)
+  z112 <- rbinom(1, n112, pz112)
+  z101 <- rbinom(1, n101, pz101)
+  z102 <- rbinom(1, n102, pz102)
+  z011 <- rbinom(1, n011, pz011)
+  z012 <- rbinom(1, n012, pz012)
+  z001 <- rbinom(1, n001, pz001)
+  z002 <- rbinom(1, n002, pz002)
+  
+  Se1[i] <- rbeta(1, aSe1 + z111 + z101 + z112 + z102, bSe1 + z011 + z001 + z012 + z002)
+  Se2[i] <- rbeta(1, aSe2 + z111 + z011 + z112 + z012, bSe2 + z101 + z001 + z102 + z002)
+  Sp1[i] <- rbeta(1, aSp1 + n011 + n001 + n012 + n002 - z011 - z001 - z012,
+                  bSp1 + n111 + n101 + n112 + n102 - z111 - z101 - z112 - z102)
+  Sp2[i] <- rbeta(1, aSp2 + n101 + n001 + n102 + n002 - z101 - z001 - z002,
+                  bSp2 + n111 + n011 + n112 + n012 - z111 - z011 - z112 - z012)
+  Pi1[i] <- rbeta(1, aPi1 + z111 + z101 + z011 + z001, bPi1 + n111 + n101
+                  + n011 + n001 - z111 - z101 - z011 - z001)
+  Pi2[i] <- rbeta(1, aPi2 + z112 + z102 + z012 + z002, bPi2 + n112 + n102
+                  + n012 + n002 - z112 - z102 - z012 - z002)
+  
+}
+
+median(Se1)
+median(Se2)
+median(Sp1)
+median(Sp2)
+median(Pi1)
+median(Pi2)
+
+quantile(Se1, probs = c(0.025, 0.975))
+quantile(Se2, probs = c(0.025, 0.975))
+quantile(Sp1, probs = c(0.025, 0.975))
+quantile(Sp2, probs = c(0.025, 0.975))
+quantile(Pi1, probs = c(0.025, 0.975))
+quantile(Pi2, probs = c(0.025, 0.975))
+
+effectiveSize(mcmc(cbind(Se1, Se2, Sp1, Sp2, Pi1, Pi2)))
+
+
+# Comparison plot
+library(prevalence)
+library(coda)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+
+
+run_gibbs_analysis <- function(aSe1, bSe1, aSp1, bSp1, aSe2, bSe2, aSp2, bSp2, aPi1, bPi1, aPi2, bPi2, S = 50000) {
+  
+  n111 <- 0; n101 <- 0; n011 <- 3; n001 <- 129 # Population 1
+  n112 <- 3; n102 <- 0; n012 <- 24; n002 <- 3   # Population 2
+  
+  Se1 <- Se2 <- Sp1 <- Sp2 <- Pi1 <- Pi2 <- numeric(S)
+  Se1[1] <- Se2[1] <- Sp1[1] <- Sp2[1] <- Pi1[1] <- Pi2[1] <- 0.5
+  
+  set.seed(123)
+  for(i in 2:S){
+    
+    pz111 <- Pi1[i-1]*Se1[i-1]*Se2[i-1] / (Pi1[i-1]*Se1[i-1]*Se2[i-1] + (1-Pi1[i-1])*(1-Sp1[i-1])*(1-Sp2[i-1]))
+    pz112 <- Pi2[i-1]*Se1[i-1]*Se2[i-1] / (Pi2[i-1]*Se1[i-1]*Se2[i-1] + (1-Pi2[i-1])*(1-Sp1[i-1])*(1-Sp2[i-1]))
+    pz101 <- Pi1[i-1]*Se1[i-1]*(1-Se2[i-1]) / (Pi1[i-1]*Se1[i-1]*(1-Se2[i-1]) + (1-Pi1[i-1])*(1-Sp1[i-1])*Sp2[i-1])
+    pz102 <- Pi2[i-1]*Se1[i-1]*(1-Se2[i-1]) / (Pi2[i-1]*Se1[i-1]*(1-Se2[i-1]) + (1-Pi2[i-1])*(1-Sp1[i-1])*Sp2[i-1])
+    pz011 <- Pi1[i-1]*(1-Se1[i-1])*Se2[i-1] / (Pi1[i-1]*(1-Se1[i-1])*Se2[i-1] + (1-Pi1[i-1])*Sp1[i-1]*(1-Sp2[i-1]))
+    pz012 <- Pi2[i-1]*(1-Se1[i-1])*Se2[i-1] / (Pi2[i-1]*(1-Se1[i-1])*Se2[i-1] + (1-Pi2[i-1])*Sp1[i-1]*(1-Sp2[i-1]))
+    pz001 <- Pi1[i-1]*(1-Se1[i-1])*(1-Se2[i-1]) / (Pi1[i-1]*(1-Se1[i-1])*(1-Se2[i-1]) + (1-Pi1[i-1])*Sp1[i-1]*Sp2[i-1]) 
+    pz002 <- Pi2[i-1]*(1-Se1[i-1])*(1-Se2[i-1]) / (Pi2[i-1]*(1-Se1[i-1])*(1-Se2[i-1]) + (1-Pi2[i-1])*Sp1[i-1]*Sp2[i-1])
+    
+    z111 <- rbinom(1, n111, pz111); z112 <- rbinom(1, n112, pz112)
+    z101 <- rbinom(1, n101, pz101); z102 <- rbinom(1, n102, pz102)
+    z011 <- rbinom(1, n011, pz011); z012 <- rbinom(1, n012, pz012)
+    z001 <- rbinom(1, n001, pz001); z002 <- rbinom(1, n002, pz002)
+    
+    
+    Se1[i] <- rbeta(1, aSe1 + z111 + z101 + z112 + z102, bSe1 + z011 + z001 + z012 + z002)
+    Se2[i] <- rbeta(1, aSe2 + z111 + z011 + z112 + z012, bSe2 + z101 + z001 + z102 + z002)
+    Sp1[i] <- rbeta(1, aSp1 + n011 + n001 + n012 + n002 - z011 - z001 - z012, bSp1 + n111 + n101 + n112 + n102 - z111 - z101 - z112 - z102)
+    Sp2[i] <- rbeta(1, aSp2 + n101 + n001 + n102 + n002 - z101 - z001 - z002, bSp2 + n111 + n011 + n112 + n012 - z111 - z011 - z112 - z012)
+    Pi1[i] <- rbeta(1, aPi1 + z111 + z101 + z011 + z001, bPi1 + n111 + n101 + n011 + n001 - z111 - z101 - z011 - z001)
+    Pi2[i] <- rbeta(1, aPi2 + z112 + z102 + z012 + z002, bPi2 + n112 + n102 + n012 + n002 - z112 - z102 - z012 - z002)
+  }
+  return(data.frame(Se_ME=Se1, Se_PCR=Se2, Sp_ME=Sp1, Sp_PCR=Sp2, pi_ME=Pi1, pi_PCR=Pi2)[-(1:5000), ])
+}
+
+
+p_Sp1 <- betaExpert(best = 0.98, lower = 0.8, p = 0.95, method = "mode")
+p_Se1 <- betaExpert(best = 0.55, upper = 0.85, p = 0.95, method = "mode")
+p_Se2 <- betaExpert(best = 0.9, lower = 0.6, p = 0.95, method = "mode")
+p_Sp2 <- betaExpert(best = 0.85, lower = 0.6, p = 0.95, method = "mode")
+p_Pi2 <- betaExpert(best = 0.3, lower = 0.08, p = 0.95, method = "mode")
+p_Pi1 <- betaExpert(best = 0.03, upper = 0.3, p = 0.95, method = "mode")
+
+res_inf <- run_gibbs_analysis(p_Se1$alpha, p_Se1$beta, p_Sp1$alpha, p_Sp1$beta, 
+                              p_Se2$alpha, p_Se2$beta, p_Sp2$alpha, p_Sp2$beta, 
+                              p_Pi1$alpha, p_Pi1$beta, p_Pi2$alpha, p_Pi2$beta)
+res_inf$Prior <- "Informative"
+
+
+res_uni <- run_gibbs_analysis(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)
+res_uni$Prior <- "Uniform"
+
+
+all_res <- rbind(res_inf, res_uni)
+plot_data <- all_res %>%
+  pivot_longer(cols = -Prior, names_to = "Parameter", values_to = "Value")
+
+
+plot_labels <- c(
+  "Se_ME"   = "Se[ME]",
+  "Sp_ME"   = "Sp[ME]",
+  "Se_PCR"  = "Se[PCR]",
+  "Sp_PCR"  = "Sp[PCR]",
+  "pi_ME"   = "pi[ME]",
+  "pi_PCR"  = "pi[PCR]"
+)
+
+
+plot_data$Parameter <- factor(plot_data$Parameter, levels = names(plot_labels))
+
+
+p <- ggplot(plot_data, aes(x = Value, fill = Prior, color = Prior)) +
+  geom_density(alpha = 0.4, size = 0.8) +
+  
+  facet_wrap(~ Parameter, scales = "free", 
+             labeller = as_labeller(plot_labels, default = label_parsed)) +
+  theme_bw() +
+  labs(x = "Parameter Value", 
+       y = "Density", 
+       fill = "Prior Setting", 
+       color = "Prior Setting") +
+  scale_fill_manual(values = c("Informative" = "#E41A1C", "Uniform" = "#377EB8")) +
+  scale_color_manual(values = c("Informative" = "#E41A1C", "Uniform" = "#377EB8")) +
+  theme(strip.text = element_text(size = 13, face = "bold"),
+        legend.position = "bottom",
+        axis.title = element_text(size = 12),
+        panel.grid.minor = element_blank()) # 移除次级网格线使图面更简洁
+
+
+print(p)
+
+
+# ggsave("posterior_density_plot.pdf", plot = p, width = 9, height = 7, device = "pdf")
+
+
+cat("图片已保存至:", getwd(), "/posterior_density_plot.pdf\n")
+
+```
+
+
